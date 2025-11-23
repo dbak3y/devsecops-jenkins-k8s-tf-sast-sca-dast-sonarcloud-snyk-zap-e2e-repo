@@ -3,7 +3,7 @@ pipeline {
     tools { 
         maven 'Maven_3_9_6'  
     }
-
+    
     stages {
         stage('Compile and Run Sonar Analysis') {
             steps {    
@@ -38,42 +38,40 @@ pipeline {
                 }
             }
         }
-
-        stage('Kubernetes Deployment') {
+        
+        stage('Kubernetes Deployment of ASG Buggy Web Application') {
             steps {
                 withKubeConfig([credentialsId: 'kubelogin']) {
-                    // Clean previous resources
-                    sh 'kubectl delete all --all -n devsecops || true'
-                    // Apply deployment
-                    sh 'kubectl apply -f deployment.yaml -n devsecops'
+                    sh('kubectl delete all --all -n devsecops || true')
+                    sh('kubectl apply -f deployment.yaml --namespace=devsecops')
                 }
             }
         }
-
-        stage('Wait for Application') {
+        
+        stage('Wait for Testing') {
             steps {
-                sh 'echo "Waiting for app to start..." && sleep 180'
+                sh 'sleep 180; echo "Application has been deployed on K8S"'
             }
         }
-
+        
         stage('Run DAST Using ZAP') {
             steps {
                 withKubeConfig([credentialsId: 'kubelogin']) {
                     script {
-                        // Get service hostname
+                        // Get the service URL from Kubernetes
                         def serviceUrl = sh(
                             script: "kubectl get service/asgbuggy -n devsecops -o json | jq -r '.status.loadBalancer.ingress[0].hostname'",
                             returnStdout: true
                         ).trim()
-
-                        // Run ZAP in Docker
+                        
+                        // Run OWASP ZAP in Docker
                         sh """
-                        docker run --rm -v ${WORKSPACE}:/zap/wrk/:rw owasp/zap2docker-stable zap.sh \
+                        docker run --rm -v ${WORKSPACE}:/zap/wrk/:rw owasp/zap2docker-stable:2.12.0 zap.sh \
                             -cmd -quickurl http://${serviceUrl} \
                             -quickprogress -quickout /zap/wrk/zap_report.html
                         """
-
-                        // Archive the report
+                        
+                        // Archive report
                         archiveArtifacts artifacts: 'zap_report.html'
                     }
                 }
