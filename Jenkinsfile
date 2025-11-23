@@ -79,6 +79,10 @@ pipeline {
                                 docker run --rm -v ${WORKSPACE}:/zap/wrk/:rw ghcr.io/zaproxy/zaproxy:latest \
                                     zap.sh -cmd -quickurl http://${serviceUrl} -quickprogress -quickout /zap/wrk/zap_report.html
                                 """
+                                // Ensure the report file exists before proceeding
+                                if (!fileExists("${WORKSPACE}/zap_report.html")) {
+                                    error "ZAP report not found after scan!"
+                                }
                                 success = true
                             } catch (Exception e) {
                                 retryCount++
@@ -90,7 +94,12 @@ pipeline {
                             }
                         }
 
-                        archiveArtifacts artifacts: 'zap_report.html'
+                        // Archive only if the report exists
+                        if (fileExists("${WORKSPACE}/zap_report.html")) {
+                            archiveArtifacts artifacts: 'zap_report.html', allowEmptyArchive: false
+                        } else {
+                            error "ZAP report archive failed: zap_report.html not found"
+                        }
                     }
                 }
             }
