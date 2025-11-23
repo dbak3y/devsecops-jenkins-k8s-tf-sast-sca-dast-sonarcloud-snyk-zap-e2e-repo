@@ -12,13 +12,15 @@ RUN mvn -B package
 # ===========================
 # Stage 2: Runtime with Tomcat
 # ===========================
-FROM tomcat:9-jdk8-alpine
+FROM tomcat:9.0-jdk8-openjdk-slim
+
+WORKDIR /usr/local/tomcat
 
 # Remove default ROOT webapp
-RUN rm -rf /usr/local/tomcat/webapps/ROOT*
+RUN rm -rf webapps/ROOT*
 
 # Copy the WAR from the builder stage
-COPY --from=builder /usr/src/easybuggy/target/ROOT.war /usr/local/tomcat/webapps/ROOT.war
+COPY --from=builder /usr/src/easybuggy/target/ROOT.war webapps/ROOT.war
 
 # Expose the port configured in EasyBuggy
 EXPOSE 8080
