@@ -3,16 +3,15 @@ pipeline {
     tools { 
         maven 'Maven_3_9_6'  
     }
-    
     stages {
         stage('Compile and Run Sonar Analysis') {
-            steps {    
+            steps {	
                 sh 'mvn clean verify sonar:sonar -Dsonar.projectKey=dbak3ybugywebapp -Dsonar.organization=dbak3ybugywebapp -Dsonar.host.url=https://sonarcloud.io -Dsonar.token=5169cafefbe8232c4f60dbbbbaf3995de3e750fb'
             }
         }
 
         stage('Run SCA Analysis Using Snyk') {
-            steps {        
+            steps {		
                 withCredentials([string(credentialsId: 'SNYK_TOKEN', variable: 'SNYK_TOKEN')]) {
                     sh 'mvn snyk:test -fn'
                 }
@@ -47,31 +46,44 @@ pipeline {
                 }
             }
         }
-        
-        stage('Wait for Testing') {
+
+        stage('Wait for Application Deployment') {
             steps {
-                sh 'sleep 180; echo "Application has been deployed on K8S"'
+                echo 'Waiting for service to get LoadBalancer hostname...'
+                sh '''
+                for i in {1..30}; do
+                    HOSTNAME=$(kubectl get service/asgbuggy -n devsecops -o json | jq -r '.status.loadBalancer.ingress[0].hostname')
+                    if [ "$HOSTNAME" != "null" ]; then
+                        echo "Service available at $HOSTNAME"
+                        break
+                    fi
+                    echo "Waiting for LoadBalancer IP..."
+                    sleep 10
+                done
+                '''
             }
         }
-        
+
         stage('Run DAST Using ZAP') {
             steps {
                 withKubeConfig([credentialsId: 'kubelogin']) {
                     script {
-                        // Get the service URL from Kubernetes
                         def serviceUrl = sh(
                             script: "kubectl get service/asgbuggy -n devsecops -o json | jq -r '.status.loadBalancer.ingress[0].hostname'",
                             returnStdout: true
                         ).trim()
-                        
+
                         // Run OWASP ZAP in Docker
                         sh """
-                        docker run --rm -v ${WORKSPACE}:/zap/wrk/:rw owasp/zap2docker-stable:2.12.0 zap.sh \
-                            -cmd -quickurl http://${serviceUrl} \
-                            -quickprogress -quickout /zap/wrk/zap_report.html
+                        docker run --rm \
+                          -v ${WORKSPACE}:/zap/wrk/:rw \
+                          owasp/zap2docker-stable:latest \
+                          zap.sh -cmd \
+                          -quickurl http://${serviceUrl} \
+                          -quickprogress \
+                          -quickout /zap/wrk/zap_report.html
                         """
-                        
-                        // Archive report
+
                         archiveArtifacts artifacts: 'zap_report.html'
                     }
                 }
