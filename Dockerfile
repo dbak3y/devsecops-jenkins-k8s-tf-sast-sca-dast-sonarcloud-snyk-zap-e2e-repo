@@ -5,23 +5,23 @@ FROM maven:3.8-jdk-8 AS builder
 
 WORKDIR /usr/src/easybuggy
 
-# Copy everything and build
+# Copy the source code and build the WAR
 COPY . .
 RUN mvn -B package
 
 # ===========================
-# Stage 2: Runtime image
+# Stage 2: Runtime with Tomcat
 # ===========================
-FROM adoptopenjdk/openjdk8:jdk8u202-b08-alpine-slim
+FROM tomcat:9-jdk8-alpine
 
-WORKDIR /app
+# Remove default ROOT webapp
+RUN rm -rf /usr/local/tomcat/webapps/ROOT*
 
-# Copy the jar from the builder stage
-COPY --from=builder /usr/src/easybuggy/target/easybuggy-1.0-SNAPSHOT.jar ./easybuggy.jar
+# Copy the WAR from the builder stage
+COPY --from=builder /usr/src/easybuggy/target/ROOT.war /usr/local/tomcat/webapps/ROOT.war
 
-# Expose debug/JMX ports
-EXPOSE 9009
-EXPOSE 7900
+# Expose the port configured in EasyBuggy
+EXPOSE 8080
 
-# Run your application with JVM options (single-line CMD for proper parsing)
-CMD ["java","-XX:MaxMetaspaceSize=128m","-Xloggc:logs/gc_%p_%t.log","-Xmx256m","-XX:MaxDirectMemorySize=90m","-XX:+UseSerialGC","-XX:+PrintHeapAtGC","-XX:+PrintGCDetails","-XX:+PrintGCDateStamps","-XX:+UseGCLogFileRotation","-XX:NumberOfGCLogFiles=5","-XX:GCLogFileSize=10M","-XX:GCTimeLimit=15","-XX:GCHeapFreeLimit=50","-XX:+HeapDumpOnOutOfMemoryError","-XX:HeapDumpPath=logs/","-XX:ErrorFile=logs/hs_err_pid%p.log","-agentlib:jdwp=transport=dt_socket,server=y,address=9009,suspend=n","-Dderby.stream.error.file=logs/derby.log","-Dderby.infolog.append=true","-Dderby.language.logStatementText=true","-Dderby.locks.deadlockTrace=true","-Dderby.locks.monitor=true","-Dderby.storage.rowLocking=true","-Dcom.sun.management.jmxremote","-Dcom.sun.management.jmxremote.port=7900","-Dcom.sun.management.jmxremote.ssl=false","-Dcom.sun.management.jmxremote.authenticate=false","-ea","-jar","easybuggy.jar"]
+# Start Tomcat
+CMD ["catalina.sh", "run"]
