@@ -65,10 +65,10 @@ pipeline {
                             returnStdout: true
                         ).trim()
 
-                        // Cleanup old Docker containers/images
-                        sh 'docker system prune -af || true'
+                        // Ensure a writable folder for ZAP inside the workspace
+                        sh 'mkdir -p ${WORKSPACE}/zap-output'
 
-                        // Retry ZAP pull and run up to 3 times
+                        // Retry ZAP Docker run
                         def retryCount = 0
                         def maxRetries = 3
                         def success = false
@@ -76,11 +76,11 @@ pipeline {
                         while(!success && retryCount < maxRetries) {
                             try {
                                 sh """
-                                docker run --rm -v ${WORKSPACE}:/zap/wrk/:rw ghcr.io/zaproxy/zaproxy:latest \
+                                docker run --rm -v ${WORKSPACE}/zap-output:/zap/wrk:rw \
+                                    ghcr.io/zaproxy/zaproxy:latest \
                                     zap.sh -cmd -quickurl http://${serviceUrl} -quickprogress -quickout /zap/wrk/zap_report.html
                                 """
-                                // Ensure the report file exists before proceeding
-                                if (!fileExists("${WORKSPACE}/zap_report.html")) {
+                                if (!fileExists("${WORKSPACE}/zap-output/zap_report.html")) {
                                     error "ZAP report not found after scan!"
                                 }
                                 success = true
@@ -94,12 +94,7 @@ pipeline {
                             }
                         }
 
-                        // Archive only if the report exists
-                        if (fileExists("${WORKSPACE}/zap_report.html")) {
-                            archiveArtifacts artifacts: 'zap_report.html', allowEmptyArchive: false
-                        } else {
-                            error "ZAP report archive failed: zap_report.html not found"
-                        }
+                        archiveArtifacts artifacts: 'zap-output/zap_report.html'
                     }
                 }
             }
