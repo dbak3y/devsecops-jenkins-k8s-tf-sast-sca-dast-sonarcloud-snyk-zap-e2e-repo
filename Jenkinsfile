@@ -1,12 +1,9 @@
 pipeline {
     agent any
-
     tools { 
-        maven 'Maven_3_9_6'
+        maven 'Maven_3_9_6'  
     }
-
     stages {
-
         stage('Compile and Run Sonar Analysis') {
             steps {    
                 sh 'mvn clean verify sonar:sonar -Dsonar.projectKey=dbak3ybugywebapp -Dsonar.organization=dbak3ybugywebapp -Dsonar.host.url=https://sonarcloud.io -Dsonar.token=5169cafefbe8232c4f60dbbbbaf3995de3e750fb'
@@ -21,7 +18,7 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') { 
+        stage('Build') { 
             steps { 
                 withDockerRegistry([credentialsId: "dockerlogin", url: ""]) {
                     script {
@@ -31,7 +28,7 @@ pipeline {
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Push') {
             steps {
                 script {
                     docker.withRegistry('https://268428820004.dkr.ecr.us-west-2.amazonaws.com', 'ecr:us-west-2:aws-credentials') {
@@ -40,7 +37,7 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Kubernetes Deployment of ASG Buggy Web Application') {
             steps {
                 withKubeConfig([credentialsId: 'kubelogin']) {
@@ -50,9 +47,9 @@ pipeline {
             }
         }
 
-        stage('Wait for Application Deployment') {
+        stage('Wait for Testing') {
             steps {
-                sh 'echo "Waiting for application to become ready..."; sleep 180'
+                sh 'sleep 180; echo "Application has been deployed on K8S"'
             }
         }
 
@@ -60,35 +57,24 @@ pipeline {
             steps {
                 withKubeConfig([credentialsId: 'kubelogin']) {
                     script {
-                        // Wait for LoadBalancer hostname
-                        def hostname = ''
-                        for (int i = 0; i < 30; i++) { // wait up to 5 minutes
-                            hostname = sh(script: "kubectl get service/asgbuggy -n devsecops -o json | jq -r '.status.loadBalancer.ingress[0].hostname'", returnStdout: true).trim()
-                            if (hostname && hostname != 'null') {
-                                echo "Service is available at $hostname"
-                                break
-                            }
-                            echo "Waiting for LoadBalancer hostname..."
-                            sleep(10)
-                        }
-                        if (!hostname || hostname == 'null') {
-                            error "LoadBalancer hostname not available after waiting"
-                        }
+                        // Wait extra 180s for service readiness (optional, can keep or remove)
+                        sh 'sleep 180'
 
-                        // Set ZAP Docker image
-                        def zapImage = "owasp/zap2docker-stable:latest"
+                        // Get LoadBalancer hostname
+                        def hostname = sh(
+                            script: 'kubectl get service/asgbuggy -n devsecops -o json | jq -r ".status.loadBalancer.ingress[0].hostname"',
+                            returnStdout: true
+                        ).trim()
 
-                        // Pull image first
-                        sh "docker pull ${zapImage}"
-
-                        // Run ZAP scan
+                        // Run ZAP scan using official GHCR image
                         sh """
-                            docker run --rm -v ${WORKSPACE}:/zap/wrk/:rw ${zapImage} \
-                            zap.sh -cmd -quickurl http://${hostname} \
-                            -quickprogress -quickout /zap/wrk/zap_report.html
+                            docker run --rm \
+                                -v ${WORKSPACE}:/zap/wrk/:rw \
+                                ghcr.io/zaproxy/zaproxy:latest \
+                                zap.sh -cmd -quickurl http://${hostname} \
+                                -quickprogress -quickout /zap/wrk/zap_report.html
                         """
 
-                        // Archive report
                         archiveArtifacts artifacts: 'zap_report.html'
                     }
                 }
