@@ -17,10 +17,13 @@ FROM adoptopenjdk/openjdk8:jdk8u202-b08-alpine-slim
 WORKDIR /app
 
 # Copy the jar from the builder stage
-# Make sure the jar name matches what Maven produces
 COPY --from=builder /usr/src/easybuggy/target/easybuggy-1.0-SNAPSHOT.jar ./easybuggy.jar
 
-# Your original CMD with JVM options
+# Expose debug/JMX ports
+EXPOSE 9009
+EXPOSE 7900
+
+# Run your application with JVM options
 CMD ["java",
      "-XX:MaxMetaspaceSize=128m",
      "-Xloggc:logs/gc_%p_%t.log",
