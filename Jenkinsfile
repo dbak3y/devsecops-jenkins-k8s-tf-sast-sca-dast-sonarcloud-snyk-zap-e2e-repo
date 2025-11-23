@@ -3,7 +3,9 @@ pipeline {
     tools { 
         maven 'Maven_3_9_6'  
     }
+
     stages {
+
         stage('Compile and Run Sonar Analysis') {
             steps {    
                 sh 'mvn clean verify sonar:sonar -Dsonar.projectKey=dbak3ybugywebapp -Dsonar.organization=dbak3ybugywebapp -Dsonar.host.url=https://sonarcloud.io -Dsonar.token=5169cafefbe8232c4f60dbbbbaf3995de3e750fb'
@@ -18,7 +20,7 @@ pipeline {
             }
         }
 
-        stage('Build') { 
+        stage('Build Docker Image') { 
             steps { 
                 withDockerRegistry([credentialsId: "dockerlogin", url: ""]) {
                     script {
@@ -28,7 +30,7 @@ pipeline {
             }
         }
 
-        stage('Push') {
+        stage('Push Docker Image') {
             steps {
                 script {
                     docker.withRegistry('https://268428820004.dkr.ecr.us-west-2.amazonaws.com', 'ecr:us-west-2:aws-credentials') {
@@ -41,15 +43,15 @@ pipeline {
         stage('Kubernetes Deployment of ASG Buggy Web Application') {
             steps {
                 withKubeConfig([credentialsId: 'kubelogin']) {
-                    sh('kubectl delete all --all -n devsecops || true')
-                    sh('kubectl apply -f deployment.yaml --namespace=devsecops')
+                    sh 'kubectl delete all --all -n devsecops || true'
+                    sh 'kubectl apply -f deployment.yaml --namespace=devsecops'
                 }
             }
         }
 
-        stage('Wait for Testing') {
+        stage('Wait for Deployment') {
             steps {
-                sh 'sleep 180; echo "Application has been deployed on K8S"'
+                sh 'echo "Waiting 180 seconds for app to be ready"; sleep 180'
             }
         }
 
@@ -57,23 +59,36 @@ pipeline {
             steps {
                 withKubeConfig([credentialsId: 'kubelogin']) {
                     script {
-                        // Wait extra 180s for service readiness (optional, can keep or remove)
-                        sh 'sleep 180'
-
-                        // Get LoadBalancer hostname
-                        def hostname = sh(
+                        // Get service hostname
+                        def serviceUrl = sh(
                             script: 'kubectl get service/asgbuggy -n devsecops -o json | jq -r ".status.loadBalancer.ingress[0].hostname"',
                             returnStdout: true
                         ).trim()
 
-                        // Run ZAP scan using official GHCR image
-                        sh """
-                            docker run --rm \
-                                -v ${WORKSPACE}:/zap/wrk/:rw \
-                                ghcr.io/zaproxy/zaproxy:latest \
-                                zap.sh -cmd -quickurl http://${hostname} \
-                                -quickprogress -quickout /zap/wrk/zap_report.html
-                        """
+                        // Cleanup old Docker containers/images
+                        sh 'docker system prune -af || true'
+
+                        // Retry ZAP pull and run up to 3 times
+                        def retryCount = 0
+                        def maxRetries = 3
+                        def success = false
+
+                        while(!success && retryCount < maxRetries) {
+                            try {
+                                sh """
+                                docker run --rm -v ${WORKSPACE}:/zap/wrk/:rw ghcr.io/zaproxy/zaproxy:latest \
+                                    zap.sh -cmd -quickurl http://${serviceUrl} -quickprogress -quickout /zap/wrk/zap_report.html
+                                """
+                                success = true
+                            } catch (Exception e) {
+                                retryCount++
+                                echo "ZAP Docker run failed, retry ${retryCount}/${maxRetries}..."
+                                if (retryCount == maxRetries) {
+                                    error "ZAP scan failed after ${maxRetries} attempts."
+                                }
+                                sleep 30
+                            }
+                        }
 
                         archiveArtifacts artifacts: 'zap_report.html'
                     }
