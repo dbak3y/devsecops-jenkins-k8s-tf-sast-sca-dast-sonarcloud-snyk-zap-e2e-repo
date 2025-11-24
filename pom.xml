@@ -48,7 +48,7 @@
                 <jvm.args.gc.log.path>
                     -Xlog:gc*:logs/gc_%p_%t.log:time,level,tags:filecount=5,filesize=10M
                 </jvm.args.gc.log.path>
-                <!-- legacy JDK6/7 flags disabled under JDK11 -->
+                <!-- Disable legacy GC flags under JDK 11 -->
                 <jvm.args.print.heap.at.gc>-Dummy=Dummy</jvm.args.print.heap.at.gc>
                 <jvm.args.print.gc.details>-Dummy=Dummy</jvm.args.print.gc.details>
                 <jvm.args.print.gc.date.stamps>-Dummy=Dummy</jvm.args.print.gc.date.stamps>
@@ -148,7 +148,7 @@
         </dependency>
     </dependencies>
 
-    <!-- BUILD PLUGINS -->
+    <!-- BUILD -->
     <build>
         <plugins>
 
@@ -181,9 +181,6 @@
                                 </requireMavenVersion>
                                 <requireJavaVersion>
                                     <version>[1.6,)</version>
-                                    <message>
-                                        [ERROR] OLD JDK [${java.version}] in use. EasyBuggy requires JDK 1.6 or later
-                                    </message>
                                 </requireJavaVersion>
                             </rules>
                         </configuration>
@@ -191,7 +188,7 @@
                 </executions>
             </plugin>
 
-            <!-- OWASP Dependency Check -->
+            <!-- OWASP dependency-check -->
             <plugin>
                 <groupId>org.owasp</groupId>
                 <artifactId>dependency-check-maven</artifactId>
@@ -201,14 +198,14 @@
                 </configuration>
             </plugin>
 
-            <!-- Sonar Maven Plugin -->
+            <!-- Sonar plugin -->
             <plugin>
                 <groupId>org.sonarsource.scanner.maven</groupId>
                 <artifactId>sonar-maven-plugin</artifactId>
                 <version>3.9.1.2184</version>
             </plugin>
 
-            <!-- Snyk SCA Scan -->
+            <!-- Snyk -->
             <plugin>
                 <groupId>io.snyk</groupId>
                 <artifactId>snyk-maven-plugin</artifactId>
@@ -218,10 +215,11 @@
                 </configuration>
             </plugin>
 
-            <!-- Antrun (copy files, etc.) -->
+            <!-- Antrun (fixed!) -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
                 <executions>
                     <execution>
                         <id>create-empty-directory-and-english-properties</id>
@@ -230,15 +228,14 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
-                            <tasks>
+                            <target>
                                 <mkdir dir="logs" />
                                 <copy file="${basedir}/src/main/resources/messages_en.properties"
                                       tofile="${project.build.outputDirectory}/messages.properties" />
                                 <copy file="${basedir}/src/main/resources/indexpage_en.properties"
                                       tofile="${project.build.outputDirectory}/indexpage.properties" />
-                                <delete
-                                        file="${project.build.outputDirectory}/org/t246osslab/easybuggy/core/utils/DeleteClassWhileMavenBuild.class" />
-                            </tasks>
+                                <delete file="${project.build.outputDirectory}/org/t246osslab/easybuggy/core/utils/DeleteClassWhileMavenBuild.class" />
+                            </target>
                         </configuration>
                     </execution>
                 </executions>
@@ -276,7 +273,7 @@
                 </executions>
             </plugin>
 
-            <!-- Exec plugin -->
+            <!-- Exec (Java-runner) -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
@@ -317,13 +314,16 @@
                                 <argument>-Dderby.infolog.append=true</argument>
                                 <argument>-Dderby.language.logStatementText=true</argument>
                                 <argument>-Dderby.locks.deadlockTrace=true</argument>
-                                <argument>-Dderby.locks.monitor=true</argument>
-                                <argument>-Dderby.storage.rowLocking=true</argument>
+                                <argument>-Dderby.locks.monitor>true</argument>
+                                <argument>-Dderby.storage.rowLocking>true</argument>
+
+                                <argument>-ea</argument>
+
 
                                 <argument>-ea</argument>
                                 <argument>-jar</argument>
                                 <argument>target/easybuggy.jar</argument>
-                                <argument>-httpPort>${easybuggy-port}</argument>
+                                <argument>-httpPort=${easybuggy-port}</argument>
                             </arguments>
                         </configuration>
                     </execution>
@@ -334,7 +334,6 @@
 
         <pluginManagement>
             <plugins>
-                <!-- m2e metadata -->
                 <plugin>
                     <groupId>org.eclipse.m2e</groupId>
                     <artifactId>lifecycle-mapping</artifactId>
