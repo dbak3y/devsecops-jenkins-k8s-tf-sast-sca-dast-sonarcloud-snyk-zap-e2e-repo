@@ -1,7 +1,7 @@
 pipeline {
     agent any
 
-    tools { 
+    tools {
         maven 'Maven_3_9_6'
     }
 
@@ -17,31 +17,39 @@ pipeline {
 
     stages {
 
+        /* ------------------------------
+         * STAGE 1 — SONARCLOUD (SAST)
+         * ------------------------------ */
         stage('Compile & Sonar Analysis') {
             steps {
-                // In a real setup, use withCredentials + SONAR_TOKEN from Jenkins
                 sh """
                     mvn clean verify sonar:sonar \
-                      -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                      -Dsonar.organization=${SONAR_ORG} \
-                      -Dsonar.host.url=${SONAR_HOST_URL} \
-                      -Dsonar.token=5169cafefbe8232c4f60dbbbbaf3995de3e750fb
+                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                        -Dsonar.organization=${SONAR_ORG} \
+                        -Dsonar.host.url=${SONAR_HOST_URL} \
+                        -Dsonar.token=5169cafefbe8232c4f60dbbbbaf3995de3e750fb
                 """
             }
         }
 
+        /* ------------------------------
+         * STAGE 2 — SNYK (SCA)
+         * ------------------------------ */
         stage('SCA Analysis with Snyk') {
             steps {
                 withCredentials([string(credentialsId: 'SNYK_TOKEN', variable: 'SNYK_TOKEN')]) {
                     sh """
                         mvn snyk:test \
-                          -Dsnyk.token=${SNYK_TOKEN} \
-                          -fn
+                            -Dsnyk.token=${SNYK_TOKEN} \
+                            -fn
                     """
                 }
             }
         }
 
+        /* ------------------------------
+         * STAGE 3 — DOCKER BUILD
+         * ------------------------------ */
         stage('Build Docker Image') {
             steps {
                 withDockerRegistry([credentialsId: 'dockerlogin', url: '']) {
@@ -52,6 +60,9 @@ pipeline {
             }
         }
 
+        /* ------------------------------
+         * STAGE 4 — PUSH TO ECR
+         * ------------------------------ */
         stage('Push Docker Image to ECR') {
             steps {
                 script {
@@ -62,74 +73,91 @@ pipeline {
             }
         }
 
-        stage('Kubernetes Deployment of ASG Buggy Web Application') {
+        /* ------------------------------
+         * STAGE 5 — KUBERNETES DEPLOYMENT
+         * ------------------------------ */
+        stage('Deploy to Kubernetes') {
             steps {
                 withKubeConfig([credentialsId: 'kubelogin']) {
-                    // Brutal reset of namespace – fine for lab, not for prod
                     sh "kubectl delete all --all -n ${K8S_NAMESPACE} || true"
-                    sh "kubectl apply -f deployment.yaml --namespace=${K8S_NAMESPACE}"
+                    sh "kubectl apply -f deployment.yaml -n ${K8S_NAMESPACE}"
                 }
             }
         }
 
-        stage('Wait for Deployment') {
+        /* ------------------------------
+         * STAGE 6 — WAIT FOR LOAD BALANCER
+         * ------------------------------ */
+        stage('Wait for Load Balancer Ready') {
             steps {
-                sh 'echo "Waiting 180 seconds for app to be ready"; sleep 180'
+                withKubeConfig([credentialsId: 'kubelogin']) {
+                    script {
+
+                        echo "Waiting for ELB hostname..."
+
+                        def serviceUrl = ""
+                        timeout(time: 5, unit: 'MINUTES') {
+                            waitUntil {
+                                serviceUrl = sh(
+                                    script: "kubectl get svc asgbuggy -n ${K8S_NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
+                                    returnStdout: true
+                                ).trim()
+
+                                return serviceUrl != null && serviceUrl != "" && serviceUrl != "null"
+                            }
+                        }
+
+                        echo "ELB Ready: ${serviceUrl}"
+                        env.ELB_URL = serviceUrl
+                    }
+                }
             }
         }
 
+        /* ------------------------------
+         * STAGE 7 — OWASP ZAP (DAST)
+         * ------------------------------ */
         stage('Run DAST Using ZAP') {
             steps {
                 withKubeConfig([credentialsId: 'kubelogin']) {
                     script {
-                        // Get ELB hostname from the service
-                        def serviceUrl = sh(
-                            script: "kubectl get service/asgbuggy -n ${K8S_NAMESPACE} -o json | jq -r '.status.loadBalancer.ingress[0].hostname'",
-                            returnStdout: true
-                        ).trim()
 
-                        echo "ZAP scanning URL: http://${serviceUrl}"
+                        def scanUrl = "http://${env.ELB_URL}"
+                        echo "Running ZAP against: ${scanUrl}"
 
-                        // Ensure a writable folder for ZAP inside the workspace
                         sh """
                             mkdir -p "${WORKSPACE}/zap-output"
                             chmod -R 777 "${WORKSPACE}/zap-output"
                         """
 
                         def maxRetries = 3
-                        def success = false
+                        for (int attempt = 1; attempt <= maxRetries; attempt++) {
 
-                        for (int i = 1; i <= maxRetries; i++) {
                             try {
                                 sh """
                                     docker run --rm \
                                       -v ${WORKSPACE}/zap-output:/zap/wrk:rw \
                                       ghcr.io/zaproxy/zaproxy:latest \
                                       zap.sh -cmd \
-                                        -quickurl http://${serviceUrl} \
-                                        -quickprogress \
-                                        -quickout /zap/wrk/zap_report.html \
-                                        -exclude '^.*/oom.*' \
-                                        -exclude '^.*/memory.*' \
-                                        -exclude '^.*/thread.*' \
-                                        -exclude '^.*/slow.*' \
-                                        -exclude '^.*/illegal.*' \
-                                        -exclude '^.*/massive.*' \
-                                        -exclude '^.*/exception.*'
+                                           -quickurl ${scanUrl} \
+                                           -quickprogress \
+                                           -quickout /zap/wrk/zap_report.html
                                 """
 
                                 if (!fileExists("${WORKSPACE}/zap-output/zap_report.html")) {
-                                    error "ZAP report not found after scan!"
+                                    error "ZAP did not generate zap_report.html"
                                 }
 
-                                success = true
+                                echo "ZAP scan completed."
                                 break
 
-                            } catch (Exception e) {
-                                echo "ZAP Docker run failed, retry ${i}/${maxRetries}..."
-                                if (i == maxRetries) {
-                                    error "ZAP scan failed after ${maxRetries} attempts."
+                            } catch (err) {
+                                echo "ZAP failed on attempt ${attempt}/3"
+
+                                if (attempt == maxRetries) {
+                                    error "ZAP failed after 3 attempts"
                                 }
+
                                 sleep 30
                             }
                         }
@@ -141,6 +169,9 @@ pipeline {
         }
     }
 
+    /* ------------------------------
+     * POST ACTIONS
+     * ------------------------------ */
     post {
         always {
             echo "Pipeline completed (success or fail)."
@@ -149,7 +180,7 @@ pipeline {
             echo "✅ Pipeline finished successfully."
         }
         failure {
-            echo "❌ Pipeline failed – check the stage logs above."
+            echo "❌ Pipeline failed — review the logs above."
         }
     }
 }
