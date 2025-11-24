@@ -1,29 +1,29 @@
 # ===========================
 # Stage 1: Build with Maven
 # ===========================
-FROM maven:3.8-jdk-8 AS builder
+FROM maven:3.9.6-eclipse-temurin-8 AS builder
 
 WORKDIR /usr/src/easybuggy
 
-# Copy the source code and build the WAR
+# Copy full project and build WAR
 COPY . .
-RUN mvn -B package
+RUN mvn clean package -DskipTests
 
 # ===========================
 # Stage 2: Runtime with Tomcat
 # ===========================
-FROM tomcat:9.0-jdk8-openjdk-slim
+FROM tomcat:9.0-jdk8-temurin
 
 WORKDIR /usr/local/tomcat
 
-# Remove default ROOT webapp
-RUN rm -rf webapps/ROOT*
+# Remove default ROOT application
+RUN rm -rf webapps/ROOT webapps/ROOT.war
 
-# Copy the WAR from the builder stage
+# Copy the built WAR from builder stage
 COPY --from=builder /usr/src/easybuggy/target/ROOT.war webapps/ROOT.war
 
-# Expose the port configured in EasyBuggy
+# App runs on 8080 inside container
 EXPOSE 8080
 
-# Start Tomcat
+# Run Tomcat
 CMD ["catalina.sh", "run"]
