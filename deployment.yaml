@@ -16,9 +16,49 @@ spec:
       - name: asgbuggy
         image: 268428820004.dkr.ecr.us-west-2.amazonaws.com/asg
         imagePullPolicy: Always
+
         ports:
         - containerPort: 8080
-# service type loadbalancer       
+
+        # JVM memory control so EasyBuggy cannot crash your container instantly
+        env:
+        - name: JAVA_OPTS
+          value: "-Xms256m -Xmx256m -Djava.security.egd=file:/dev/./urandom"
+
+        # Restart container when Tomcat crashes (OOM, thread exhaustion)
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sh", "-c", "sleep 5"]
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 5
+
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 20
+          periodSeconds: 15
+          timeoutSeconds: 3
+          failureThreshold: 5
+
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+      restartPolicy: Always
+
 ---
 apiVersion: v1
 kind: Service
@@ -36,5 +76,3 @@ spec:
   type: LoadBalancer
   selector:
     app: asgbuggy
-
-
